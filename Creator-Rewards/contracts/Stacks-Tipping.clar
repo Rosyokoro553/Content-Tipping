@@ -16,6 +16,11 @@
 (define-constant ERR-CONTRACT-IS-PAUSED (err u107))
 (define-constant ERR-ZERO-AMOUNT-TRANSFER (err u108))
 (define-constant ERR-CONTENT-INACTIVE (err u109))
+(define-constant ERR-INVALID-CONTENT-ID (err u110))
+(define-constant ERR-INVALID-CONTENT-TITLE (err u111))
+(define-constant ERR-INVALID-CONTENT-DETAILS (err u112))
+(define-constant ERR-INVALID-TIP-MESSAGE (err u113))
+(define-constant ERR-INVALID-ADMIN-ADDRESS (err u114))
 
 ;; Contract State Variables
 
@@ -119,7 +124,45 @@
         tip-transaction-count: (+ (get tip-transaction-count content-data) u1)
       })
     )
+    (ok true)
   )
+)
+
+;; Validate content identifier
+(define-private (is-valid-content-id (content-id (string-ascii 64)))
+  (and 
+    (>= (len content-id) u1)
+    (<= (len content-id) u64)
+  )
+)
+
+;; Validate content title
+(define-private (is-valid-content-title (title (string-ascii 256)))
+  (and 
+    (>= (len title) u1)
+    (<= (len title) u256)
+  )
+)
+
+;; Validate content details
+(define-private (is-valid-content-details (details (string-utf8 1024)))
+  (and 
+    (>= (len details) u1)
+    (<= (len details) u1024)
+  )
+)
+
+;; Validate tip message if provided
+(define-private (is-valid-tip-message (message (optional (string-utf8 280))))
+  (match message
+    tip-text (and (>= (len tip-text) u0) (<= (len tip-text) u280))
+    true
+  )
+)
+
+;; Validate admin address - for principal types, we check that it's not the zero address
+(define-private (is-valid-admin-address (address principal))
+  (not (is-eq address 'SP000000000000000000002Q6VF78))
 )
 
 ;; Administrative Functions
@@ -128,7 +171,14 @@
 (define-public (transfer-admin-rights (new-admin-address principal))
   (begin
     (asserts! (caller-is-admin) ERR-UNAUTHORIZED-ACCESS)
-    (ok (var-set contract-admin new-admin-address))
+    
+    ;; Validate admin address - ensure it's not the zero address
+    (asserts! (is-valid-admin-address new-admin-address) ERR-INVALID-ADMIN-ADDRESS)
+    
+    ;; Only set the new admin after validation
+    (var-set contract-admin new-admin-address)
+    
+    (ok true)
   )
 )
 
@@ -159,6 +209,9 @@
       ;; Check authorization
       (asserts! (caller-is-admin) ERR-UNAUTHORIZED-ACCESS)
       
+      ;; Validate recipient address
+      (asserts! (is-valid-admin-address recipient-address) ERR-INVALID-ADMIN-ADDRESS)
+      
       ;; Ensure non-zero withdrawal
       (asserts! (> withdrawal-amount u0) ERR-INSUFFICIENT-BALANCE)
       
@@ -186,11 +239,16 @@
     ;; Verify contract is active
     (asserts! (contract-operations-allowed) ERR-CONTRACT-IS-PAUSED)
     
+    ;; Validate input parameters
+    (asserts! (is-valid-content-id content-identifier) ERR-INVALID-CONTENT-ID)
+    (asserts! (is-valid-content-title content-title) ERR-INVALID-CONTENT-TITLE)
+    (asserts! (is-valid-content-details content-details) ERR-INVALID-CONTENT-DETAILS)
+    
     ;; Check if content ID is unique
     (asserts! (is-none (map-get? content-registry { content-identifier: content-identifier })) 
               ERR-CONTENT-ALREADY-EXISTS)
     
-    ;; Create new content entry
+    ;; Create new content entry with validated inputs
     (map-set content-registry
       { content-identifier: content-identifier }
       {
@@ -222,10 +280,15 @@
       ;; Verify contract is active
       (asserts! (contract-operations-allowed) ERR-CONTRACT-IS-PAUSED)
       
+      ;; Validate input parameters
+      (asserts! (is-valid-content-id content-identifier) ERR-INVALID-CONTENT-ID)
+      (asserts! (is-valid-content-title content-title) ERR-INVALID-CONTENT-TITLE)
+      (asserts! (is-valid-content-details content-details) ERR-INVALID-CONTENT-DETAILS)
+      
       ;; Verify content ownership
       (asserts! (is-eq tx-sender (get content-owner content-data)) ERR-UNAUTHORIZED-ACCESS)
       
-      ;; Update content details
+      ;; Update content details with validated inputs
       (map-set content-registry
         { content-identifier: content-identifier }
         (merge content-data {
@@ -258,6 +321,10 @@
       ;; Check contract is active
       (asserts! (contract-operations-allowed) ERR-CONTRACT-IS-PAUSED)
       
+      ;; Validate input parameters
+      (asserts! (is-valid-content-id content-identifier) ERR-INVALID-CONTENT-ID)
+      (asserts! (is-valid-tip-message tip-message) ERR-INVALID-TIP-MESSAGE)
+      
       ;; Check content is active
       (asserts! (get content-status-active content-data) ERR-CONTENT-INACTIVE)
       
@@ -275,7 +342,7 @@
       ;; Update creator balance
       (add-to-creator-balance content-owner creator-share)
       
-      ;; Record tip details
+      ;; Record tip details with validated inputs
       (map-set tip-history
         { content-identifier: content-identifier, tip-sender: tx-sender }
         {
@@ -285,8 +352,8 @@
         }
       )
       
-      ;; Update content statistics
-      (update-content-tip-stats content-identifier tip-amount)
+      ;; Update content statistics with validated content-identifier
+      (unwrap! (update-content-tip-stats content-identifier tip-amount) ERR-CONTENT-NOT-FOUND)
       
       (ok true)
     )

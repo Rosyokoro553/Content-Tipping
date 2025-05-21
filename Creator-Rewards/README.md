@@ -1,4 +1,4 @@
-# CreatorTip
+# CreatorTip: A Decentralized Content Creator Tipping Platform
 
 A decentralized content creator tipping platform built on Stacks blockchain.
 
